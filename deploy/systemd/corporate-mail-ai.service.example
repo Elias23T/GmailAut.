@@ -1,0 +1,22 @@
+[Unit]
+Description=Corporate Mail AI API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=corporate-mail-ai
+Group=corporate-mail-ai
+WorkingDirectory=/opt/corporate-mail-ai/backend
+EnvironmentFile=/etc/corporate-mail-ai/backend.env
+ExecStart=/opt/corporate-mail-ai/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

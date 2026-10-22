@@ -1,0 +1,9 @@
+from typing import Protocol
+from app.modules.mailboxes.domain.entities import Mailbox
+from .entities import MessagePage, MessageDetail
+
+
+class MailReader(Protocol):
+    def check(self, mailbox: Mailbox, username: str, password: str) -> None: ...
+    def search(self, mailbox: Mailbox, username: str, password: str, query: str, unread: bool, limit: int, offset: int) -> MessagePage: ...
+    def read(self, mailbox: Mailbox, username: str, password: str, uid: int, uid_validity: int) -> MessageDetail: ...

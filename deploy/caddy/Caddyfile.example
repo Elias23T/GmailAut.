@@ -1,0 +1,31 @@
+# Sustituir el dominio y preparar frontend/dist antes de habilitar este archivo.
+mail.example.com {
+    encode zstd gzip
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Content-Security-Policy "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    }
+
+    @integration path /mcp /mcp/* /oauth/* /.well-known/*
+    handle @integration {
+        request_body {
+            max_size 64KB
+        }
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    handle_path /api/* {
+        request_body {
+            max_size 64KB
+        }
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    handle {
+        root * /opt/corporate-mail-ai/frontend/dist
+        try_files {path} /index.html
+        file_server
+    }
+}
