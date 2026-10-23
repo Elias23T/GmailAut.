@@ -1,0 +1,33 @@
+[Unit]
+Description=Corporate Mail AI API (correo.nucleasystems.com)
+After=network-online.target postgresql-18.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=correoia
+Group=correoia
+WorkingDirectory=/home/correoia/correoia_app/current/backend
+EnvironmentFile=/etc/correoia/backend.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/correoia/correoia_app/current/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 3300 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1 --no-access-log
+Restart=always
+RestartSec=5
+# Prioridad baja y memoria acotada: el servidor es compartido con el ERP.
+Nice=10
+MemoryMax=1G
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
