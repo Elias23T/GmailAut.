@@ -20,5 +20,5 @@ class SQLMembershipRepository:
     def add(self, membership: Membership) -> None:
         self.session.add(membership)
 
-    def all_for_user(self, user_id: UUID) -> list[Membership]:
+    def all_for_user(self, user_id: UUID) -> 'list[Membership]':
         return list(self.session.scalars(select(Membership).where(Membership.user_id == user_id).order_by(Membership.id)))
