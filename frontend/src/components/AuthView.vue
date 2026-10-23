@@ -2,16 +2,16 @@
 import { ref } from 'vue'
 import { api, messageOf, type AuthResult } from '../api'
 import AppIcon from './AppIcon.vue'
+import PasswordInput from './PasswordInput.vue'
 defineProps<{ connecting?: boolean }>()
 const emit = defineEmits<{ authenticated: [result: AuthResult] }>()
 const identifier = ref(''), password = ref(''), error = ref(''), busy = ref(false)
-const showPassword = ref(false)
 async function submit() {
   if (busy.value) return
   error.value = ''; busy.value = true
   try {
     const result = await api<AuthResult>('/auth/login', 'POST', { username: identifier.value, password: password.value })
-    password.value = ''; showPassword.value = false; emit('authenticated', result)
+    password.value = ''; emit('authenticated', result)
   } catch (cause) { error.value = messageOf(cause) }
   finally { busy.value = false }
 }
@@ -23,14 +23,14 @@ async function submit() {
       <header class="login-header">
         <span class="login-logo" aria-hidden="true">CM</span>
         <h1 id="login-heading">Corporate Mail <span>AI</span></h1>
-        <p>{{ connecting ? 'Inicia sesión para autorizar tu conexión con ChatGPT.' : 'Bienvenido. Inicia sesión para continuar.' }}</p>
+        <p>{{ connecting ? 'Ingresa con la cuenta de cliente que te entregó el administrador para conectar ChatGPT.' : 'Bienvenido. Inicia sesión para continuar.' }}</p>
       </header>
       <form :aria-busy="busy" @submit.prevent="submit">
         <label for="login-identifier">Usuario o correo
           <span class="login-field"><AppIcon name="user" :size="19" /><input id="login-identifier" v-model="identifier" name="username" type="text" required autocomplete="username" autofocus maxlength="320" placeholder="Tu usuario o correo" :disabled="busy" /></span>
         </label>
-        <label for="login-password">Contraseña
-          <span class="login-field"><AppIcon name="lock" :size="19" /><input id="login-password" v-model="password" name="password" :type="showPassword ? 'text' : 'password'" required maxlength="1024" autocomplete="current-password" placeholder="Tu contraseña" :disabled="busy" /><button type="button" class="password-toggle" :aria-label="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'" :aria-pressed="showPassword" aria-controls="login-password" :disabled="busy" @click="showPassword = !showPassword"><AppIcon :name="showPassword ? 'eye-off' : 'eye'" :size="20" /></button></span>
+        <label for="login-password">Contraseña de Corporate Mail AI
+          <PasswordInput id="login-password" v-model="password" name="password" leading-icon="lock" required maxlength="1024" autocomplete="current-password" placeholder="Tu contraseña de la plataforma" :disabled="busy" />
         </label>
         <p v-if="error" id="login-error" class="notice error" role="alert">{{ error }}</p>
         <button type="submit" class="button primary login-submit" :disabled="busy"><span>{{ busy ? 'Ingresando…' : 'Ingresar' }}</span><AppIcon v-if="!busy" name="arrow" :size="19" /></button>
@@ -85,21 +85,7 @@ async function submit() {
   pointer-events: none;
 }
 .login-field input { height: 52px; padding: 13px 46px; font-size: .94rem; }
-.password-toggle {
-  position: absolute;
-  right: 5px;
-  top: 4px;
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #738a9e;
-}
-.password-toggle:hover { color: var(--teal); background: #eaf5f6; }
-.password-toggle:focus-visible { outline: 2px solid var(--teal); outline-offset: 0; }
+.auth-card :deep(.password-input input) { height: 52px; font-size: .94rem; }
 .login-submit { width: 100%; min-height: 52px; margin-top: 7px; font-size: .98rem; }
 .auth-card .notice { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 480px) {

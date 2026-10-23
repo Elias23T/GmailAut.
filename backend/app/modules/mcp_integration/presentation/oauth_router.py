@@ -7,7 +7,7 @@ from pydantic import Field, ConfigDict
 from app.core.dependencies import ActorDependency, UowDependency, require_administrator
 from app.modules.audit.application.service import record
 from app.modules.authorization.application.service import AuthorizationService
-from app.modules.mcp_integration.application.service import OAuthService, OAuthError
+from app.modules.mcp_integration.application.service import OAuthService, OAuthError, scopes_of
 from app.modules.mcp_integration.infrastructure.repository import SQLOAuthRepository
 from app.shared.domain.entities import utcnow
 from app.shared.presentation.schemas import InputModel
@@ -27,7 +27,7 @@ class Registration(InputModel):
     token_endpoint_auth_method: str = 'none'
     grant_types: list[str] = ['authorization_code', 'refresh_token']
     response_types: list[str] = ['code']
-    scope: Literal['mail:read'] = 'mail:read'
+    scope: str = Field(default='mail:read mail:send', min_length=1, max_length=100)
 
 
 class ConsentRequest(InputModel):
@@ -37,6 +37,7 @@ class ConsentRequest(InputModel):
 class Consent(ConsentRequest):
     tenant_id: UUID | None = None
     approve: bool
+    scope: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 @router.get('/.well-known/oauth-authorization-server')
@@ -47,7 +48,7 @@ def metadata(request: Request):
             'revocation_endpoint': base + '/oauth/revoke', 'response_types_supported': ['code'],
             'grant_types_supported': ['authorization_code', 'refresh_token'],
             'token_endpoint_auth_methods_supported': ['none'],
-            'code_challenge_methods_supported': ['S256'], 'scopes_supported': ['mail:read'],
+            'code_challenge_methods_supported': ['S256'], 'scopes_supported': ['mail:read', 'mail:send'],
             'authorization_response_iss_parameter_supported': True}
 
 
@@ -56,16 +57,17 @@ def metadata(request: Request):
 def resource_metadata(request: Request):
     base = request.app.state.settings.public_base_url
     return {'resource': base + '/mcp', 'authorization_servers': [base],
-            'scopes_supported': ['mail:read'], 'bearer_methods_supported': ['header']}
+            'scopes_supported': ['mail:read', 'mail:send'], 'bearer_methods_supported': ['header']}
 
 
 @router.post('/oauth/register', status_code=201)
 def register(body: Registration, request: Request, uow: UowDependency):
+    requested_scopes = scopes_of(body.scope)
     client = service(request, uow).register(body.client_name, body.redirect_uris,
                                           body.token_endpoint_auth_method, body.grant_types, body.response_types)
     return {'client_id': client.client_id, 'client_name': client.name, 'redirect_uris': client.redirect_uris,
             'token_endpoint_auth_method': 'none', 'grant_types': ['authorization_code', 'refresh_token'],
-            'response_types': ['code'], 'scope': 'mail:read'}
+            'response_types': ['code'], 'scope': ' '.join(requested_scopes)}
 
 
 @router.get('/oauth/authorize')
@@ -75,7 +77,7 @@ def authorize(request: Request, uow: UowDependency,
               state: str = Query(min_length=1, max_length=1024),
               code_challenge: str = Query(min_length=1, max_length=128),
               resource: str = Query(min_length=1, max_length=2048),
-              response_type: str = 'code', code_challenge_method: str = 'S256', scope: str = 'mail:read'):
+              response_type: str = 'code', code_challenge_method: str = 'S256', scope: str = 'mail:read mail:send'):
     parameters = dict(client_id=client_id, redirect_uri=redirect_uri, state=state, code_challenge=code_challenge,
                       resource=resource, response_type=response_type, code_challenge_method=code_challenge_method, scope=scope)
     signed = service(request, uow).prepare(parameters)
@@ -91,7 +93,7 @@ def context(body: ConsentRequest, request: Request, actor: ActorDependency, uow:
 
 @router.post('/oauth/consent')
 def consent(body: Consent, request: Request, actor: ActorDependency, uow: UowDependency):
-    return {'redirect_uri': service(request, uow).consent(actor, body.request, body.tenant_id, body.approve)}
+    return {'redirect_uri': service(request, uow).consent(actor, body.request, body.tenant_id, body.approve, body.scope)}
 
 
 async def form_data(request):
@@ -122,7 +124,7 @@ async def revoke(request: Request, uow: UowDependency):
 def settings(request: Request):
     config = request.app.state.settings
     return {'mcp_url': config.public_base_url + '/mcp', 'public_https': config.public_base_url.startswith('https://'),
-            'redirect_uris': config.oauth_redirect_uris, 'authentication': 'OAuth 2.1 · PKCE S256', 'scope': 'mail:read'}
+            'redirect_uris': config.oauth_redirect_uris, 'authentication': 'OAuth 2.1 · PKCE S256', 'scope': 'mail:read mail:send'}
 
 
 @admin_router.get('/connections')
@@ -135,8 +137,8 @@ def connections(tenant_id: UUID, request: Request, actor: ActorDependency, uow: 
         member = uow.memberships.get(tenant_id, token.membership_id)
         user = uow.users.get(member.user_id)
         result[token.grant_id] = {'id': token.grant_id, 'membership_id': member.id, 'name': user.name,
-            'email': user.email, 'created_at': token.created_at, 'expires_at': token.expires_at,
-            'active': not token.revoked_at and token.expires_at > utcnow() and user.status == 'active' and member.status == 'active'}
+            'email': user.email, 'created_at': token.created_at, 'expires_at': token.expires_at, 'scope': ' '.join(token.scopes),
+            'active': not token.revoked_at and token.expires_at > utcnow() and user.status == 'active' and member.status == 'active' and not user.is_platform_admin}
     return list(result.values())
 
 

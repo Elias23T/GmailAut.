@@ -16,7 +16,7 @@ import pytest
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 INITIAL_REVISION = "20261021_0001"
-HEAD_REVISION = '20261021_0004'
+HEAD_REVISION = '20261023_0008'
 TABLES = [
     "users", "tenants", "memberships", "mailboxes", "mailbox_credentials",
     "mailbox_grants", "audit_events",
@@ -79,9 +79,9 @@ def test_offline_downgrade_drops_tables_in_reverse_dependency_order():
     assert "DELETE FROM public.alembic_version" in sql
 
 
-def test_metadata_registers_seven_core_and_three_oauth_tables():
+def test_metadata_registers_core_oauth_and_outgoing_tables():
     from app.shared.infrastructure.model_registry import metadata
-    assert set(metadata.tables) == set(TABLES + ['oauth_clients', 'oauth_authorization_codes', 'oauth_tokens'])
+    assert set(metadata.tables) == set(TABLES + ['oauth_clients', 'oauth_authorization_codes', 'oauth_tokens', 'outgoing_messages'])
 
 
 def test_template_creates_a_valid_manual_revision_without_connecting(tmp_path):
@@ -106,9 +106,19 @@ def test_oauth_revision_is_additive_and_has_no_triggers():
 
 def test_cascade_revision_only_changes_foreign_keys():
     config = alembic_config()
-    command.upgrade(config, '20261021_0003:head', sql=True)
+    command.upgrade(config, '20261021_0003:20261021_0004', sql=True)
     sql = config.output_buffer.getvalue()
     assert sql.count('ON DELETE CASCADE') == 13
     for statement in ('DELETE FROM', 'DROP TABLE', 'CREATE TABLE', 'CREATE TRIGGER', 'CREATE FUNCTION'):
         assert statement not in sql
     assert 'REFERENCES public.users' not in sql
+
+
+def test_webmail_revision_adds_only_an_optional_column_and_constraint():
+    config = alembic_config()
+    command.upgrade(config, '20261022_0007:20261023_0008', sql=True)
+    sql = config.output_buffer.getvalue()
+    assert 'ADD COLUMN webmail_url TEXT' in sql
+    assert 'ck_mailboxes_webmail_url' in sql
+    for statement in ('DROP TABLE', 'DELETE FROM', 'CREATE TABLE', 'CREATE TRIGGER'):
+        assert statement not in sql

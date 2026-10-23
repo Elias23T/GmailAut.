@@ -8,6 +8,7 @@ from app.modules.mailboxes.infrastructure.repositories import SQLMailboxReposito
 from app.modules.authorization.infrastructure.repositories import SQLGrantRepository
 from app.modules.audit.infrastructure.repositories import SQLAuditRepository
 from app.modules.mcp_integration.infrastructure.repository import SQLOAuthRepository
+from app.modules.mail_sending.infrastructure.repository import SQLOutgoingRepository
 
 
 class SQLUnitOfWork:
@@ -20,6 +21,7 @@ class SQLUnitOfWork:
         self.grants = SQLGrantRepository(session)
         self.audit = SQLAuditRepository(session)
         self.oauth = SQLOAuthRepository(session)
+        self.outgoing = SQLOutgoingRepository(session)
 
     def flush(self) -> None:
         self.session.flush()

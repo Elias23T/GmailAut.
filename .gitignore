@@ -1,5 +1,7 @@
 .env
 .env.*
+*.env
+*.env.*
 !.env.example
 .venv/
 node_modules/
@@ -9,6 +11,8 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.vscode/
 .coverage
 htmlcov/
 .local-validation/

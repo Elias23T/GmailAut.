@@ -28,6 +28,13 @@ def digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def scopes_of(value: str) -> list[str]:
+    requested = value.split()
+    if not requested or len(requested) != len(set(requested)) or 'mail:read' not in requested or set(requested) - {'mail:read', 'mail:send'}:
+        raise OAuthError('invalid_scope', 'Los permisos admitidos son mail:read y, opcionalmente, mail:send.')
+    return [scope for scope in ('mail:read', 'mail:send') if scope in requested]
+
+
 class OAuthService:
     def __init__(self, uow: UnitOfWork, store: OAuthRepository, settings, tokens):
         self.uow, self.store, self.settings, self.tokens = uow, store, settings, tokens
@@ -58,8 +65,7 @@ class OAuthService:
             raise OAuthError('unsupported_response_type')
         if parameters.get('resource') != self.resource:
             raise OAuthError('invalid_target', 'El recurso solicitado no corresponde a este servidor.')
-        if parameters.get('scope', 'mail:read').split() != ['mail:read']:
-            raise OAuthError('invalid_scope')
+        scopes_of(parameters.get('scope', 'mail:read'))
         if parameters.get('code_challenge_method') != 'S256' or not re.fullmatch(r'[A-Za-z0-9_-]{43}', parameters.get('code_challenge', '')):
             raise OAuthError('invalid_request', 'Se requiere PKCE S256.')
         now = utcnow()
@@ -80,27 +86,48 @@ class OAuthService:
             raise OAuthError('invalid_request', 'La solicitud expiró. Inicia la conexión de nuevo desde ChatGPT.') from None
 
     def context(self, actor: Actor, signed: str):
+        self._customer(actor)
         payload = self.request(signed)
         result = []
+        unavailable = []
         for tenant in self.uow.tenants.for_user(actor.user_id):
             member = AuthorizationService(self.uow).member(actor, tenant.id)
-            boxes = [box for box in self.uow.mailboxes.list(tenant.id)
-                     if box.status == 'active' and self.uow.grants.get(tenant.id, member.id, box.id)]
+            authorized = [box for box in self.uow.mailboxes.list(tenant.id)
+                          if self.uow.grants.get(tenant.id, member.id, box.id)]
+            boxes = [box for box in authorized if box.status == 'active']
+            unavailable.extend({'email': box.email, 'status': box.status} for box in authorized if box.status != 'active')
             if boxes:
                 result.append({'id': tenant.id, 'name': tenant.name,
-                               'mailboxes': [{'id': box.id, 'email': box.email} for box in boxes]})
+                               'mailboxes': [{'id': box.id, 'email': box.email,
+                                   'can_send': bool(box.smtp_enabled and (grant := self.uow.grants.get(tenant.id, member.id, box.id)) and grant.can_send)} for box in boxes]})
         return {'client_name': self._client(payload['parameters']['client_id']).name, 'tenants': result,
-                'scope': 'mail:read', 'expires_at': payload['exp']}
+                'unavailable_mailboxes': unavailable,
+                'scope': ' '.join(scopes_of(payload['parameters'].get('scope', 'mail:read'))), 'expires_at': payload['exp']}
 
-    def consent(self, actor: Actor, signed: str, tenant_id: UUID | None, approve: bool):
+    def _customer(self, actor):
+        user = self.uow.users.get(actor.user_id)
+        if not user or user.status != 'active':
+            raise Unauthorized('La cuenta no está disponible.')
+        if user.is_platform_admin:
+            raise Forbidden('Conecta ChatGPT con el usuario y la contraseña del cliente. La cuenta de administrador solo gestiona la plataforma.')
+
+    def consent(self, actor: Actor, signed: str, tenant_id: UUID | None, approve: bool, scope: str | None = None):
+        self._customer(actor)
         payload = self.request(signed)
         params = payload['parameters']
         callback = {'state': params['state'], 'iss': self.settings.public_base_url}
         if not approve:
             callback['error'] = 'access_denied'
         else:
-            if not tenant_id or not any(str(tenant['id']) == str(tenant_id) for tenant in self.context(actor, signed)['tenants']):
+            requested = scopes_of(params.get('scope', 'mail:read'))
+            selected_scopes = scopes_of(scope) if scope is not None else requested
+            if not set(selected_scopes) <= set(requested):
+                raise OAuthError('invalid_scope', 'Solo puedes autorizar los permisos solicitados por ChatGPT.')
+            tenant = next((tenant for tenant in self.context(actor, signed)['tenants'] if str(tenant['id']) == str(tenant_id)), None)
+            if not tenant_id or not tenant:
                 raise Forbidden('No tienes buzones activos autorizados en esa empresa.')
+            if 'mail:send' in selected_scopes and not any(box['can_send'] for box in tenant['mailboxes']):
+                raise Forbidden('El administrador todavía no habilitó el envío en tus buzones. Puedes autorizar solo lectura.')
             member = AuthorizationService(self.uow).member(actor, tenant_id)
             self.store.lock_member(member.id)
             AuthorizationService(self.uow).member(actor, tenant_id)
@@ -108,7 +135,8 @@ class OAuthService:
             self.store.add(AuthorizationCode(id=UUID(payload['jti']), code_hash=digest(raw),
                 client_id=self._client(params['client_id']).id, tenant_id=tenant_id, membership_id=member.id,
                 redirect_uri=params['redirect_uri'], resource_uri=self.resource,
-                code_challenge=params['code_challenge'], expires_at=utcnow() + timedelta(seconds=90)))
+                code_challenge=params['code_challenge'], scopes=selected_scopes,
+                expires_at=utcnow() + timedelta(seconds=90)))
             record(self.uow, actor, 'oauth.authorize', tenant_id=tenant_id)
             self.uow.commit()
             callback['code'] = raw
@@ -119,19 +147,22 @@ class OAuthService:
         member = self.uow.memberships.get(tenant_id, membership_id)
         if not member:
             raise Unauthorized('La autorización no está disponible.')
+        user = self.uow.users.get(member.user_id)
+        if user and user.is_platform_admin:
+            raise Unauthorized('Vuelve a conectar ChatGPT con una cuenta de cliente, no con el administrador.')
         AuthorizationService(self.uow).member(Actor(member.user_id, uuid4(), 'mcp'), tenant_id)
         return member
 
-    def _issue(self, client, tenant_id, membership_id, grant_id, refresh_expires):
+    def _issue(self, client, tenant_id, membership_id, grant_id, refresh_expires, scopes):
         now = utcnow()
         access, refresh = secrets.token_urlsafe(48), secrets.token_urlsafe(48)
         for raw, kind, expiry in ((access, 'access', now + timedelta(minutes=15)), (refresh, 'refresh', refresh_expires)):
             self.store.add(OAuthToken(token_hash=digest(raw), token_type=kind, grant_id=grant_id,
                 client_id=client.id, tenant_id=tenant_id, membership_id=membership_id,
-                resource_uri=self.resource, expires_at=expiry))
+                resource_uri=self.resource, expires_at=expiry, scopes=list(scopes)))
         self.uow.commit()
         return {'access_token': access, 'refresh_token': refresh, 'token_type': 'Bearer',
-                'expires_in': 900, 'scope': 'mail:read'}
+                'expires_in': 900, 'scope': ' '.join(scopes)}
 
     def exchange(self, data: dict):
         client = self._client(data.get('client_id', ''))
@@ -158,7 +189,7 @@ class OAuthService:
                 raise OAuthError('invalid_grant')
             self._member(code.tenant_id, code.membership_id)
             code.consumed_at = now
-            return self._issue(client, code.tenant_id, code.membership_id, code.id, now + timedelta(days=7))
+            return self._issue(client, code.tenant_id, code.membership_id, code.id, now + timedelta(days=7), code.scopes)
         if data.get('grant_type') == 'refresh_token':
             token = self.store.token(digest(data.get('refresh_token', '')))
             if not token or token.client_id != client.id or token.token_type != 'refresh' or token.resource_uri != self.resource:
@@ -171,17 +202,18 @@ class OAuthService:
                 self.store.revoke_grant(token.grant_id, now)
                 self.uow.commit()
                 raise OAuthError('invalid_grant', 'El token de renovación ya fue utilizado. Vuelve a conectar.')
-            if token.expires_at <= now or data.get('scope', 'mail:read') != 'mail:read':
+            requested = scopes_of(data.get('scope', ' '.join(token.scopes)))
+            if token.expires_at <= now or not set(requested) <= set(token.scopes):
                 raise OAuthError('invalid_grant')
             self._member(token.tenant_id, token.membership_id)
             token.revoked_at = now
-            return self._issue(client, token.tenant_id, token.membership_id, token.grant_id, token.expires_at)
+            return self._issue(client, token.tenant_id, token.membership_id, token.grant_id, token.expires_at, requested)
         raise OAuthError('unsupported_grant_type')
 
     def verify(self, raw: str):
         token = self.store.token(digest(raw))
         if (not token or token.token_type != 'access' or token.revoked_at or token.expires_at <= utcnow()
-                or token.resource_uri != self.resource or token.scopes != ['mail:read']):
+                or token.resource_uri != self.resource or token.scopes not in (['mail:read'], ['mail:read', 'mail:send'])):
             raise Unauthorized('La conexión con ChatGPT no es válida o expiró.')
         client = self.store.client_by_id(token.client_id)
         if not client or client.status != 'active':

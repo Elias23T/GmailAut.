@@ -14,6 +14,8 @@ from app.core.dependencies import get_db_session
 from app.shared.infrastructure.database import Database
 from app.shared.infrastructure.security import ArgonPasswords, JWTokens, AESMailboxCipher
 from app.modules.mail_access.infrastructure.imap_reader import TLSMailReader
+from app.modules.mail_sending.infrastructure.smtp_sender import SMTPMailSender
+from app.modules.mail_sending.presentation.router import router as sending_router
 from app.core.http import configure_http
 from app.modules.identity.presentation.router import router as identity_router
 from app.modules.tenants.presentation.router import router as tenant_router
@@ -39,6 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.tokens = JWTokens(settings.jwt_secret.get_secret_value() if settings.jwt_secret else None, settings.jwt_minutes)
         application.state.cipher = AESMailboxCipher(settings.mailbox_encryption_key.get_secret_value() if settings.mailbox_encryption_key else None, settings.mailbox_encryption_key_version)
         application.state.mail_reader = TLSMailReader(settings.imap_timeout, settings.imap_max_message_bytes, settings.imap_allow_private_hosts)
+        application.state.mail_sender = SMTPMailSender(settings.smtp_timeout, settings.smtp_allow_private_hosts)
         try:
             async with mcp.session_manager.run():
                 yield
@@ -48,7 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application = FastAPI(title="Corporate Mail AI", version="0.2.0", lifespan=lifespan)
     mcp, mcp_application = create_mcp(settings, application.state)
     configure_http(application, settings)
-    for router in (identity_router, admin_router, oauth_router, connection_router, tenant_router, mailbox_router, authorization_router, audit_router, mail_router):
+    for router in (identity_router, admin_router, oauth_router, connection_router, tenant_router, mailbox_router, authorization_router, audit_router, mail_router, sending_router):
         application.include_router(router)
 
     @application.exception_handler(OAuthError)
@@ -67,8 +70,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             session.execute(text("SELECT 1")).scalar_one()
             revision = session.execute(text('SELECT version_num FROM public.alembic_version')).scalar_one_or_none()
-            if revision != '20261021_0004':
-                raise HTTPException(status_code=503, detail='Falta aplicar la migración 20261021_0004 con Alembic.')
+            if revision != '20261023_0008':
+                raise HTTPException(status_code=503, detail='Falta aplicar la migración 20261023_0008 con Alembic.')
         except SQLAlchemyError:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

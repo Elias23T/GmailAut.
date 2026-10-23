@@ -14,6 +14,7 @@ class TenantService:
         self.authorization = AuthorizationService(uow)
 
     def create(self, actor: Actor, name: str, slug: str | None = None) -> Tenant:
+        self.uow.users.lock_administration()
         self.authorization.administrator(actor)
         if slug is not None and self.uow.tenants.by_slug(slug):
             raise Conflict('Ese identificador de empresa ya está en uso.')
@@ -21,7 +22,8 @@ class TenantService:
         tenant = Tenant(id=tenant_id, name=name.strip(), slug=slug or f'empresa-{tenant_id.hex}')
         self.uow.tenants.add(tenant)
         self.uow.flush()
-        self.uow.memberships.add(Membership(tenant_id=tenant.id, user_id=actor.user_id, role='owner'))
+        for administrator in self.uow.users.administrators():
+            self.uow.memberships.add(Membership(tenant_id=tenant.id, user_id=administrator.id, role='owner'))
         record(self.uow, actor, 'tenant.create', tenant_id=tenant.id)
         self.uow.commit()
         return tenant

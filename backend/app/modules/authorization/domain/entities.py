@@ -10,5 +10,6 @@ class MailboxGrant(Entity):
     tenant_id: UUID
     membership_id: UUID
     mailbox_id: UUID
+    can_send: bool = False
     granted_by_membership_id: UUID | None = None
     created_at: datetime = field(default_factory=utcnow)

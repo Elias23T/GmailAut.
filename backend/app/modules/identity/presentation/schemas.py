@@ -1,13 +1,19 @@
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 from pydantic import EmailStr, Field, SecretStr, model_validator
 from app.shared.presentation.schemas import InputModel, OutputModel, Name
+from pydantic import BeforeValidator, StringConstraints
+
+ClientUsername = Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True,
+    pattern=r'^[a-z][a-z0-9_.-]{2,31}$', min_length=3, max_length=32),
+    BeforeValidator(lambda value: value.strip().lower() if isinstance(value, str) else value)]
 
 
 class RegisterInput(InputModel):
     name: Name
     email: EmailStr
-    password: SecretStr = Field(min_length=12, max_length=1024)
+    password: SecretStr = Field(min_length=6, max_length=1024)
 
 
 class LoginInput(InputModel):

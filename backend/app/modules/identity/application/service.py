@@ -19,7 +19,7 @@ class IdentityService:
             record(self.uow, None, 'identity.login', outcome='denied', request_id=request_id)
             self.uow.commit()
             raise Unauthorized('Usuario, correo o contraseña incorrectos.')
-        token = self.tokens.issue(user.id)
+        token = self.tokens.issue(user.id, user.credential_stamp)
         record(self.uow, Actor(user.id, request_id), 'identity.login')
         self.uow.commit()
         return user, token

@@ -2,22 +2,19 @@
 import argparse
 from getpass import getpass
 import re
-from sqlalchemy import select
 from pydantic import TypeAdapter, EmailStr
 from app.core.config import Settings
 from app.modules.identity.domain.entities import User
-from app.modules.memberships.domain.entities import Membership
-from app.modules.tenants.domain.entities import Tenant
+from app.modules.identity.application.administrator_access import attach_administrator
+from app.shared.domain.entities import utcnow
 from app.shared.infrastructure.database import Database
 from app.shared.infrastructure.unit_of_work import SQLUnitOfWork
 from app.shared.infrastructure.security import ArgonPasswords
 
 
 def create_admin(session, email, name, password, username=None):
-    if len(password) < 12:
-        raise ValueError('La contraseña debe tener al menos 12 caracteres.')
-    if session.scalar(select(User).where(User.is_platform_admin.is_(True))):
-        raise ValueError('Ya existe el administrador. No se creará una segunda cuenta administradora.')
+    if len(password) < 6:
+        raise ValueError('La contraseña debe tener al menos 6 caracteres.')
     if bool(email) == bool(username):
         raise ValueError('Indica exactamente uno: correo o nombre de usuario.')
     if email:
@@ -27,6 +24,7 @@ def create_admin(session, email, name, password, username=None):
         if not re.fullmatch(r'[a-z][a-z0-9_.-]{2,31}', username):
             raise ValueError('El usuario debe tener entre 3 y 32 caracteres y comenzar con una letra.')
     uow = SQLUnitOfWork(session)
+    uow.users.lock_administration()
     identifier = email or username
     user = uow.users.by_login(identifier)
     if user:
@@ -45,12 +43,7 @@ def create_admin(session, email, name, password, username=None):
 
 
 def attach_tenants(session, uow, user):
-    for tenant in session.scalars(select(Tenant)):
-        member = uow.memberships.for_user(tenant.id, user.id)
-        if member:
-            member.role, member.status = 'owner', 'active'
-        else:
-            uow.memberships.add(Membership(tenant_id=tenant.id, user_id=user.id, role='owner'))
+    attach_administrator(uow, user)
 
 
 def main():
@@ -65,18 +58,20 @@ def main():
     try:
         with database.session() as session:
             if args.command == 'create-admin':
-                password = getpass('Contraseña del administrador (mínimo 12 caracteres): ')
+                password = getpass('Contraseña del administrador (mínimo 6 caracteres): ')
                 if password != getpass('Repetir contraseña: '):
                     parser.error('Las contraseñas no coinciden.')
                 create_admin(session, args.email, args.name, password, args.username)
             else:
-                if session.scalar(select(User).where(User.is_platform_admin.is_(True))):
-                    parser.error('Ya existe el administrador.')
                 uow = SQLUnitOfWork(session)
+                uow.users.lock_administration()
                 user = uow.users.by_login(args.email or args.username)
                 if not user or user.status != 'active':
                     parser.error('No existe una cuenta activa con ese correo o usuario.')
                 user.is_platform_admin = True
+                user.auth_version += 1
+                for member in uow.memberships.all_for_user(user.id):
+                    uow.oauth.revoke_member(member.id, utcnow())
                 attach_tenants(session, uow, user)
                 uow.commit()
         print('Administrador configurado. Inicia sesión desde la interfaz.')

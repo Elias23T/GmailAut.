@@ -165,4 +165,7 @@ class TLSMailReader:
                 parser.feed(content)
                 content = ''.join(parser.parts)
             attachments = [str(part.get_filename())[:200] for part in message.walk() if part.get_filename()][:100]
-            return MessageDetail(**vars(summary), recipients=str(message.get('to', ''))[:2000], body=content[:200000], attachments=attachments, truncated=len(content) > 200000)
+            return MessageDetail(**vars(summary), recipients=str(message.get('to', ''))[:2000], body=content[:200000],
+                attachments=attachments, truncated=len(content) > 200000,
+                message_id=str(message.get('message-id', ''))[:1000],
+                reply_to=str(message.get('reply-to', ''))[:1000], references=str(message.get('references', ''))[:4000])

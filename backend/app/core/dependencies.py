@@ -38,6 +38,7 @@ def get_current_user(request: Request, uow: UowDependency,
     user = uow.users.get(user_id)
     if not user or user.status != 'active':
         raise Unauthorized('La cuenta no está disponible.')
+    request.app.state.tokens.subject(credential.credentials, user.credential_stamp)
     return user
 
 

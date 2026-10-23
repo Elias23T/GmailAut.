@@ -64,6 +64,30 @@ class AuthorizationService:
             self.uow.commit()
         return grant
 
+    def sending_mailbox(self, actor: Actor, tenant_id: UUID, mailbox_id: UUID) -> Mailbox:
+        mailbox = self.mailbox(actor, tenant_id, mailbox_id)
+        member = self.uow.memberships.for_user(tenant_id, actor.user_id)
+        grant = self.uow.grants.get(tenant_id, member.id, mailbox_id)
+        if not grant.can_send:
+            record(self.uow, actor, 'mail.send.authorization', tenant_id=tenant_id, mailbox_id=mailbox_id, outcome='denied')
+            self.uow.commit()
+            raise Forbidden('No tienes permiso de envio para este buzon. Solicitalo al administrador.')
+        if not mailbox.smtp_enabled or not mailbox.smtp_host:
+            raise Forbidden('El envio SMTP no esta habilitado para este buzon.')
+        return mailbox
+
+    def set_sending(self, actor: Actor, tenant_id: UUID, mailbox_id: UUID, membership_id: UUID, can_send: bool) -> MailboxGrant:
+        self.member(actor, tenant_id, admin=True)
+        if not self.uow.mailboxes.get(tenant_id, mailbox_id):
+            raise NotFound('Buzon no disponible.')
+        grant = self.uow.grants.get(tenant_id, membership_id, mailbox_id)
+        if not grant:
+            raise NotFound('Primero concede permiso de lectura a este cliente.')
+        grant.can_send = can_send
+        record(self.uow, actor, 'mailbox.send.grant' if can_send else 'mailbox.send.revoke', tenant_id=tenant_id, mailbox_id=mailbox_id)
+        self.uow.commit()
+        return grant
+
     def revoke(self, actor: Actor, tenant_id: UUID, mailbox_id: UUID, membership_id: UUID) -> None:
         self.member(actor, tenant_id, admin=True)
         if not self.uow.mailboxes.get(tenant_id, mailbox_id):

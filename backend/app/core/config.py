@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     imap_timeout: int = Field(default=10, ge=1, le=60)
     imap_max_message_bytes: int = Field(default=1048576, ge=16384, le=5242880)
     imap_allow_private_hosts: bool = False
+    smtp_timeout: int = Field(default=10, ge=1, le=60)
+    smtp_allow_private_hosts: bool = False
     public_base_url: str = 'http://127.0.0.1:8000'
     frontend_url: str = 'http://127.0.0.1:5173'
     oauth_redirect_uris: list[str] = ['https://chatgpt.com/connector_platform_oauth_redirect']
@@ -58,6 +60,19 @@ class Settings(BaseSettings):
         if self.app_env == 'production' and any(not url.startswith('https://') for url in
                 [self.public_base_url, self.frontend_url, *self.oauth_redirect_uris]):
             raise ValueError('Producción requiere HTTPS en los orígenes y callbacks configurados.')
+        if self.app_env == 'production':
+            import base64
+            secret = self.jwt_secret.get_secret_value() if self.jwt_secret else ''
+            if len(secret) < 32 or secret.startswith('CHANGE_ME'):
+                raise ValueError('Producción requiere un JWT_SECRET válido de al menos 32 caracteres.')
+            try:
+                key = base64.b64decode(self.mailbox_encryption_key.get_secret_value() if self.mailbox_encryption_key else '', altchars=b'-_', validate=True)
+            except ValueError:
+                key = b''
+            if len(key) != 32:
+                raise ValueError('Producción requiere MAILBOX_ENCRYPTION_KEY de 32 bytes en Base64 URL-safe.')
+            if self.imap_allow_private_hosts or self.smtp_allow_private_hosts:
+                raise ValueError('Producción requiere IMAP_ALLOW_PRIVATE_HOSTS y SMTP_ALLOW_PRIVATE_HOSTS desactivados.')
         return self
 
     @field_validator('public_base_url', 'frontend_url')

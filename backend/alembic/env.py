@@ -16,8 +16,8 @@ if config.config_file_name and config.get_section("loggers"):
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = metadata
-if len(target_metadata.tables) != 10:
-    raise CommandError('El registro ORM debe contener siete tablas principales y tres de OAuth.')
+if len(target_metadata.tables) != 11:
+    raise CommandError('El registro ORM debe contener once tablas de aplicacion, incluido el envio de correo.')
 
 
 def include_object(obj, name, type_, reflected, compare_to):

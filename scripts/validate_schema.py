@@ -128,7 +128,7 @@ def main() -> None:
             GRANT SELECT, INSERT, UPDATE, DELETE ON
                 public.users, public.tenants, public.memberships, public.mailboxes,
                 public.mailbox_credentials, public.mailbox_grants, public.oauth_clients,
-                public.oauth_authorization_codes, public.oauth_tokens TO corporate_mail_app;
+                public.oauth_authorization_codes, public.oauth_tokens, public.outgoing_messages TO corporate_mail_app;
             GRANT SELECT, INSERT ON public.audit_events TO corporate_mail_app;
         """])
         if args.include_oauth:
@@ -145,7 +145,7 @@ def main() -> None:
             "-d", "corporate_mail_ai", "-Atc",
             "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'",
         ]).strip()
-        expected_tables = 11
+        expected_tables = 12
         if count != str(expected_tables):
             raise RuntimeError(f"Se esperaban {expected_tables} tablas, se encontraron {count}.")
         trigger_count = run(psql + [

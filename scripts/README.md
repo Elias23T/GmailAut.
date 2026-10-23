@@ -3,6 +3,11 @@
 configure_secrets.py prepara backend/.env y genera secretos faltantes sin
 sobrescribir claves validas ni imprimirlas.
 
+configure_production.py crea un archivo nuevo para systemd y python-dotenv,
+con origen HTTPS, contraseña PostgreSQL solicitada por consola y secretos
+aleatorios. --reuse-encryption-key-file conserva el cifrado al trasladar datos.
+No sobrescribe entornos existentes. Ver docs/PRODUCCION_ALMALINUX.md.
+
 validate_schema.py crea un PostgreSQL temporal autenticado y limitado a
 loopback, comprueba restricciones y permisos, detiene el servidor y elimina
 su directorio temporal verificado. No usa las credenciales de la base real.

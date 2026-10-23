@@ -23,7 +23,7 @@ onUnmounted(() => { window.removeEventListener('session-expired', logout); windo
 
 <template>
   <ConnectView v-if="user && connecting && authorizationRequest" :user="user" :authorization-request="authorizationRequest" @logout="logout" />
-  <DashboardView v-else-if="user?.is_platform_admin && !connecting" :key="user.id" :user="user" @logout="logout" />
+  <DashboardView v-else-if="user?.is_platform_admin && !connecting" :key="user.id" :user="user" @logout="logout" @updated="user = $event" />
   <main v-else-if="user" class="connection-layout"><section class="card consent-card"><h1>Tu cuenta está habilitada</h1><p>Inicia la conexión desde ChatGPT para autorizar el acceso a tus buzones. Si la solicitud expiró, vuelve a conectar Corporate Mail AI desde ChatGPT.</p><button class="button secondary" @click="logout">Cerrar sesión</button></section></main>
   <AuthView v-else :connecting="connecting" @authenticated="authenticated" />
 </template>

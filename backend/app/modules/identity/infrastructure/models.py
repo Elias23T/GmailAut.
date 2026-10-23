@@ -16,13 +16,15 @@ users_table = sa.Table(
     sa.Column("status", sa.Text(), sa.CheckConstraint("status IN ('active', 'disabled')"), nullable=False, server_default=sa.text("'active'")),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
     sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP"), onupdate=utcnow),
+    sa.Column('auth_version', sa.Integer(), nullable=False, server_default=sa.text('1')),
+    sa.Column('deleted_at', sa.DateTime(timezone=True)),
+    sa.CheckConstraint('auth_version > 0', name='ck_users_auth_version'),
+    sa.CheckConstraint("deleted_at IS NULL OR status = 'disabled'", name='ck_users_deleted_disabled'),
 
     sa.CheckConstraint('email IS NOT NULL OR username IS NOT NULL', name='ck_users_login_identifier'),
     sa.CheckConstraint("username IS NULL OR username ~ '^[a-z][a-z0-9_.-]{2,31}$'", name='ck_users_username_format'),
 )
 Base.registry.map_imperatively(User, users_table)
-sa.Index('uq_users_single_platform_admin', users_table.c.is_platform_admin, unique=True,
-         postgresql_where=users_table.c.is_platform_admin.is_(True))
 
 sa.Index('uq_users_email_normalized', sa.func.lower(users_table.c.email), unique=True)
 sa.Index('uq_users_username_normalized', sa.func.lower(users_table.c.username), unique=True)

@@ -1,10 +1,11 @@
-# Sustituir el dominio y preparar frontend/dist antes de habilitar este archivo.
+# Sustituir el dominio y publicar frontend/dist en /var/www/corporate-mail-ai.
 mail.example.com {
     encode zstd gzip
     header {
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
         Referrer-Policy no-referrer
+        Strict-Transport-Security "max-age=31536000"
         Content-Security-Policy "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     }
 
@@ -24,7 +25,7 @@ mail.example.com {
     }
 
     handle {
-        root * /opt/corporate-mail-ai/frontend/dist
+        root * /var/www/corporate-mail-ai
         try_files {path} /index.html
         file_server
     }

@@ -16,8 +16,17 @@ mailboxes_table = sa.Table(
     sa.Column("status", sa.Text(), sa.CheckConstraint("status IN ('pending', 'active', 'disabled', 'error')"), nullable=False, server_default=sa.text("'pending'")),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
     sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP"), onupdate=utcnow),
+    sa.Column('smtp_enabled', sa.Boolean(), nullable=False, server_default=sa.text('false')),
+    sa.Column('smtp_host', sa.Text()),
+    sa.Column('smtp_port', sa.Integer(), nullable=False, server_default=sa.text('465')),
+    sa.Column('smtp_security', sa.Text(), nullable=False, server_default=sa.text("'tls'")),
+    sa.Column('webmail_url', sa.Text()),
+    sa.CheckConstraint("webmail_url IS NULL OR (length(webmail_url) <= 2048 AND webmail_url LIKE 'https://%')", name='ck_mailboxes_webmail_url'),
+    sa.CheckConstraint('smtp_port BETWEEN 1 AND 65535', name='ck_mailboxes_smtp_port'),
+    sa.CheckConstraint("smtp_security IN ('tls', 'starttls')", name='ck_mailboxes_smtp_security'),
+    sa.CheckConstraint("NOT smtp_enabled OR (smtp_host IS NOT NULL AND btrim(smtp_host) <> '')", name='ck_mailboxes_smtp_host'),
     sa.UniqueConstraint("tenant_id", "id", name="uq_mailboxes_tenant_id"),
-    comment="Configuracion IMAP exclusivamente con TLS y validacion de certificado. No almacena mensajes.",
+    comment="Configuracion IMAP TLS y envio SMTP opcional con TLS y validacion de certificado.",
 
 )
 Base.registry.map_imperatively(Mailbox, mailboxes_table)

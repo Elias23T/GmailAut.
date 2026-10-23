@@ -1,10 +1,5 @@
--- Estructura real de CorreoCorpAut. Ejecutar solamente en una base vacia.
--- Diez tablas de aplicacion y alembic_version (control tecnico de migraciones).
--- Sin usuarios, credenciales, correos ni datos de clientes.
--- El unico INSERT conserva la revision tecnica necesaria para arrancar la API.
+-- Esquema completo; ejecutar solo en una base vacia. No contiene datos de usuarios ni credenciales.
 BEGIN;
-SET LOCAL search_path TO public;
-
 --
 -- PostgreSQL database dump
 --
@@ -19,10 +14,24 @@ SET idle_in_transaction_session_timeout = 0;
 SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
 SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: public; Type: SCHEMA; Schema: -; Owner: -
+--
+
+
+
+--
+-- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON SCHEMA public IS 'standard public schema';
+
 
 SET default_tablespace = '';
 
@@ -59,6 +68,13 @@ CREATE TABLE public.audit_events (
 
 
 --
+-- Name: TABLE audit_events; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.audit_events IS 'Eventos sin cuerpos, asuntos, adjuntos, terminos de busqueda, tokens ni credenciales.';
+
+
+--
 -- Name: mailbox_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -77,6 +93,20 @@ CREATE TABLE public.mailbox_credentials (
 
 
 --
+-- Name: COLUMN mailbox_credentials.encrypted_secret; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.mailbox_credentials.encrypted_secret IS 'Sobre cifrado autenticado generado por la aplicacion; debe incluir nonce y tag. Nunca texto plano.';
+
+
+--
+-- Name: COLUMN mailbox_credentials.key_version; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.mailbox_credentials.key_version IS 'Referencia a una clave externa a PostgreSQL; permite rotar las credenciales.';
+
+
+--
 -- Name: mailbox_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -86,8 +116,16 @@ CREATE TABLE public.mailbox_grants (
     membership_id uuid NOT NULL,
     mailbox_id uuid NOT NULL,
     granted_by_membership_id uuid,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    can_send boolean DEFAULT false NOT NULL
 );
+
+
+--
+-- Name: TABLE mailbox_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.mailbox_grants IS 'La concesion permite lectura; can_send autoriza envio por separado. Revocar genera auditoria.';
 
 
 --
@@ -104,12 +142,28 @@ CREATE TABLE public.mailboxes (
     status text DEFAULT 'pending'::text NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    smtp_enabled boolean DEFAULT false NOT NULL,
+    smtp_host text,
+    smtp_port integer DEFAULT 465 NOT NULL,
+    smtp_security text DEFAULT 'tls'::text NOT NULL,
+    webmail_url text,
+    CONSTRAINT ck_mailboxes_webmail_url CHECK (webmail_url IS NULL OR (length(webmail_url) <= 2048 AND webmail_url LIKE 'https://%')),
+    CONSTRAINT ck_mailboxes_smtp_host CHECK (((NOT smtp_enabled) OR ((smtp_host IS NOT NULL) AND (btrim(smtp_host) <> ''::text)))),
+    CONSTRAINT ck_mailboxes_smtp_port CHECK (((smtp_port >= 1) AND (smtp_port <= 65535))),
+    CONSTRAINT ck_mailboxes_smtp_security CHECK ((smtp_security = ANY (ARRAY['tls'::text, 'starttls'::text]))),
     CONSTRAINT mailboxes_display_name_check CHECK ((btrim(display_name) <> ''::text)),
     CONSTRAINT mailboxes_email_check CHECK (((email = btrim(email)) AND (email <> ''::text))),
     CONSTRAINT mailboxes_imap_host_check CHECK (((imap_host = btrim(imap_host)) AND (imap_host <> ''::text))),
     CONSTRAINT mailboxes_imap_port_check CHECK (((imap_port >= 1) AND (imap_port <= 65535))),
     CONSTRAINT mailboxes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'active'::text, 'disabled'::text, 'error'::text])))
 );
+
+
+--
+-- Name: TABLE mailboxes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.mailboxes IS 'Configuracion IMAP TLS y envio SMTP opcional con TLS y validacion de certificado.';
 
 
 --
@@ -154,7 +208,7 @@ CREATE TABLE public.oauth_authorization_codes (
     CONSTRAINT oauth_authorization_codes_code_hash_check CHECK ((code_hash ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT oauth_authorization_codes_redirect_uri_check CHECK ((btrim(redirect_uri) <> ''::text)),
     CONSTRAINT oauth_authorization_codes_resource_uri_check CHECK ((btrim(resource_uri) <> ''::text)),
-    CONSTRAINT oauth_authorization_codes_scopes_check CHECK ((scopes = ARRAY['mail:read'::text]))
+    CONSTRAINT oauth_authorization_codes_scopes_check CHECK (((scopes = ARRAY['mail:read'::text]) OR (scopes = ARRAY['mail:read'::text, 'mail:send'::text])))
 );
 
 
@@ -201,10 +255,49 @@ CREATE TABLE public.oauth_tokens (
     CONSTRAINT ck_oauth_tokens_expiry CHECK ((expires_at > created_at)),
     CONSTRAINT ck_oauth_tokens_revocation CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
     CONSTRAINT oauth_tokens_resource_uri_check CHECK ((btrim(resource_uri) <> ''::text)),
-    CONSTRAINT oauth_tokens_scopes_check CHECK ((scopes = ARRAY['mail:read'::text])),
+    CONSTRAINT oauth_tokens_scopes_check CHECK (((scopes = ARRAY['mail:read'::text]) OR (scopes = ARRAY['mail:read'::text, 'mail:send'::text]))),
     CONSTRAINT oauth_tokens_token_hash_check CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT oauth_tokens_token_type_check CHECK ((token_type = ANY (ARRAY['access'::text, 'refresh'::text])))
 );
+
+
+--
+-- Name: TABLE oauth_tokens; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.oauth_tokens IS 'Una fila por token opaco. grant_id agrupa access/refresh y sus rotaciones para revocacion conjunta.';
+
+
+--
+-- Name: outgoing_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outgoing_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tenant_id uuid NOT NULL,
+    mailbox_id uuid NOT NULL,
+    membership_id uuid NOT NULL,
+    encrypted_payload bytea,
+    key_version integer NOT NULL,
+    payload_hash character varying(64) NOT NULL,
+    message_id character varying(254) NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    status text DEFAULT 'prepared'::text NOT NULL,
+    sent_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT ck_outgoing_expiry CHECK ((expires_at > created_at)),
+    CONSTRAINT ck_outgoing_hash CHECK (((payload_hash)::text ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT ck_outgoing_key CHECK ((key_version > 0)),
+    CONSTRAINT ck_outgoing_status CHECK ((status = ANY (ARRAY['prepared'::text, 'sending'::text, 'sent'::text, 'failed'::text, 'unknown'::text, 'expired'::text])))
+);
+
+
+--
+-- Name: TABLE outgoing_messages; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.outgoing_messages IS 'Preparaciones de envio cifradas y estados para impedir reenvios. El contenido se elimina al finalizar o expirar.';
 
 
 --
@@ -238,6 +331,10 @@ CREATE TABLE public.users (
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     is_platform_admin boolean DEFAULT false NOT NULL,
     username text,
+    auth_version integer DEFAULT 1 NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT ck_users_auth_version CHECK ((auth_version > 0)),
+    CONSTRAINT ck_users_deleted_disabled CHECK (((deleted_at IS NULL) OR (status = 'disabled'::text))),
     CONSTRAINT ck_users_login_identifier CHECK (((email IS NOT NULL) OR (username IS NOT NULL))),
     CONSTRAINT ck_users_username_format CHECK (((username IS NULL) OR (username ~ '^[a-z][a-z0-9_.-]{2,31}$'::text))),
     CONSTRAINT users_email_check CHECK (((email = btrim(email)) AND (email <> ''::text))),
@@ -349,6 +446,22 @@ ALTER TABLE ONLY public.oauth_tokens
 
 ALTER TABLE ONLY public.oauth_tokens
     ADD CONSTRAINT oauth_tokens_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: outgoing_messages outgoing_messages_message_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outgoing_messages
+    ADD CONSTRAINT outgoing_messages_message_id_key UNIQUE (message_id);
+
+
+--
+-- Name: outgoing_messages outgoing_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outgoing_messages
+    ADD CONSTRAINT outgoing_messages_pkey PRIMARY KEY (id);
 
 
 --
@@ -506,6 +619,27 @@ CREATE INDEX ix_oauth_tokens_tenant_membership ON public.oauth_tokens USING btre
 
 
 --
+-- Name: ix_outgoing_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_outgoing_expiry ON public.outgoing_messages USING btree (expires_at);
+
+
+--
+-- Name: ix_outgoing_mailbox; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_outgoing_mailbox ON public.outgoing_messages USING btree (tenant_id, mailbox_id);
+
+
+--
+-- Name: ix_outgoing_tenant_member; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_outgoing_tenant_member ON public.outgoing_messages USING btree (tenant_id, membership_id);
+
+
+--
 -- Name: uq_mailboxes_tenant_email_normalized; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -517,13 +651,6 @@ CREATE UNIQUE INDEX uq_mailboxes_tenant_email_normalized ON public.mailboxes USI
 --
 
 CREATE UNIQUE INDEX uq_users_email_normalized ON public.users USING btree (lower(email));
-
-
---
--- Name: uq_users_single_platform_admin; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_users_single_platform_admin ON public.users USING btree (is_platform_admin) WHERE (is_platform_admin IS TRUE);
 
 
 --
@@ -595,6 +722,22 @@ ALTER TABLE ONLY public.oauth_authorization_codes
 
 ALTER TABLE ONLY public.oauth_tokens
     ADD CONSTRAINT fk_oauth_tokens_membership FOREIGN KEY (tenant_id, membership_id) REFERENCES public.memberships(tenant_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: outgoing_messages fk_outgoing_mailbox; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outgoing_messages
+    ADD CONSTRAINT fk_outgoing_mailbox FOREIGN KEY (tenant_id, mailbox_id) REFERENCES public.mailboxes(tenant_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: outgoing_messages fk_outgoing_membership; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outgoing_messages
+    ADD CONSTRAINT fk_outgoing_membership FOREIGN KEY (tenant_id, membership_id) REFERENCES public.memberships(tenant_id, id) ON DELETE CASCADE;
 
 
 --
@@ -670,16 +813,17 @@ ALTER TABLE ONLY public.oauth_tokens
 
 
 --
+-- Name: outgoing_messages outgoing_messages_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outgoing_messages
+    ADD CONSTRAINT outgoing_messages_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id) ON DELETE CASCADE;
+
+
+--
 -- PostgreSQL database dump complete
 --
 
--- Comentarios tecnicos del esquema real.
-COMMENT ON TABLE public.audit_events IS 'Eventos sin cuerpos, asuntos, adjuntos, terminos de busqueda, tokens ni credenciales.';
-COMMENT ON COLUMN public.mailbox_credentials.encrypted_secret IS 'Sobre cifrado autenticado generado por la aplicacion; debe incluir nonce y tag. Nunca texto plano.';
-COMMENT ON COLUMN public.mailbox_credentials.key_version IS 'Referencia a una clave externa a PostgreSQL; permite rotar las credenciales.';
-COMMENT ON TABLE public.mailbox_grants IS 'Todos los permisos son de lectura. Revocar elimina la concesion y genera un evento de auditoria.';
-COMMENT ON TABLE public.mailboxes IS 'Configuracion IMAP exclusivamente con TLS y validacion de certificado. No almacena mensajes.';
-COMMENT ON TABLE public.oauth_tokens IS 'Una fila por token opaco. grant_id agrupa access/refresh y sus rotaciones para revocacion conjunta.';
 
-INSERT INTO public.alembic_version (version_num) VALUES ('20261021_0004');
+INSERT INTO public.alembic_version (version_num) VALUES ('20261023_0008');
 COMMIT;

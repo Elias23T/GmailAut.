@@ -8,6 +8,15 @@ un nombre de usuario. No crea tablas adicionales.
 los datos de una empresa desactivada. No elimina datos al aplicar la revision.
 El caso de uso comprueba el estado bajo bloqueo y registra la eliminacion
 como evento global. Los usuarios y los clientes OAuth globales se conservan.
+20261022_0005 agrega SMTP opcional, el permiso can_send, el alcance mail:send
+y outgoing_messages para preparaciones cifradas y control de reenvios.
+20261022_0006 permite varios administradores, agrega auth_version para invalidar
+sesiones y completa los accesos administrativos a las empresas y buzones.
+No crea tablas ni modifica los permisos de los clientes. El downgrade falla
+si quedan varios administradores; nunca elimina ni degrada cuentas.
+20261022_0007 agrega users.deleted_at para retirar administradores desactivados
+sin eliminar los registros historicos ni los permisos que concedieron.
+Las cuentas retiradas conservan el estado desactivado y no pueden reactivarse.
 
 Desde backend/, para revisar solo el cambio pendiente:
 

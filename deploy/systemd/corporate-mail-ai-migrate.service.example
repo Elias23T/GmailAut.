@@ -1,0 +1,19 @@
+[Unit]
+Description=Corporate Mail AI database migrations (manual)
+After=network-online.target postgresql-18.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=corporate-mail-ai
+Group=corporate-mail-ai
+WorkingDirectory=/opt/corporate-mail-ai/backend
+EnvironmentFile=/etc/corporate-mail-ai/backend.env
+EnvironmentFile=/etc/corporate-mail-ai/migrations.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/corporate-mail-ai/backend/.venv/bin/python -m alembic upgrade head
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077

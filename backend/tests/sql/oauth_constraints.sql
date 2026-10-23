@@ -66,7 +66,8 @@ BEGIN
     IF NOT has_table_privilege('corporate_mail_app', 'oauth_tokens', 'INSERT') THEN
         RAISE EXCEPTION 'FALLO: faltan permisos para el esquema OAuth opcional';
     END IF;
-    RAISE NOTICE 'OK: esquema OAuth opcional y alcance exclusivo de lectura';
+    UPDATE oauth_tokens SET scopes = ARRAY['mail:read','mail:send'] WHERE client_id = client;
+    RAISE NOTICE 'OK: esquema OAuth y alcances de lectura con envio opcional';
 END;
 $$;
 ROLLBACK;

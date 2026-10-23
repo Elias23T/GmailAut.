@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from app.core.dependencies import ActorDependency, UowDependency
 from app.modules.authorization.application.service import AuthorizationService
 from app.shared.domain.errors import NotFound
-from .schemas import GrantCreate, GrantOutput
+from .schemas import GrantCreate, GrantOutput, SendingPermission
 
 router = APIRouter(prefix='/tenants/{tenant_id}/mailboxes/{mailbox_id}/grants', tags=['Permisos'])
 
@@ -24,3 +24,8 @@ def add_grant(tenant_id: UUID, mailbox_id: UUID, body: GrantCreate, actor: Actor
 @router.delete('/{membership_id}', status_code=204)
 def revoke_grant(tenant_id: UUID, mailbox_id: UUID, membership_id: UUID, actor: ActorDependency, uow: UowDependency):
     AuthorizationService(uow).revoke(actor, tenant_id, mailbox_id, membership_id)
+
+
+@router.patch('/{membership_id}', response_model=GrantOutput)
+def sending_permission(tenant_id: UUID, mailbox_id: UUID, membership_id: UUID, body: SendingPermission, actor: ActorDependency, uow: UowDependency):
+    return AuthorizationService(uow).set_sending(actor, tenant_id, mailbox_id, membership_id, body.can_send)

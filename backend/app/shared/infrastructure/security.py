@@ -1,6 +1,7 @@
 import base64
 from datetime import UTC, datetime, timedelta
 import os
+import hmac
 from uuid import UUID, uuid4
 
 import jwt
@@ -37,17 +38,23 @@ class JWTokens:
             raise Unavailable('Falta configurar JWT_SECRET con al menos 32 caracteres.')
         return self.secret
 
-    def issue(self, user_id: UUID) -> str:
+    def issue(self, user_id: UUID, credential_stamp: str | None = None) -> str:
         now = datetime.now(UTC)
         return jwt.encode({
             'sub': str(user_id), 'iat': now, 'exp': now + timedelta(minutes=self.minutes),
             'jti': str(uuid4()), 'iss': 'corporate-mail-ai', 'aud': 'corporate-mail-api',
+            'cv': self._credential_version(credential_stamp) if credential_stamp is not None else None,
         }, self._key(), algorithm='HS256')
 
-    def subject(self, token: str) -> UUID:
+    def _credential_version(self, stamp: str) -> str:
+        return hmac.digest(self._key().encode(), stamp.encode(), 'sha256').hex()
+
+    def subject(self, token: str, credential_stamp: str | None = None) -> UUID:
         try:
             payload = jwt.decode(token, self._key(), algorithms=['HS256'], issuer='corporate-mail-ai',
                                  audience='corporate-mail-api', options={'require': ['sub', 'exp', 'iat', 'jti', 'iss', 'aud']})
+            if credential_stamp is not None and not hmac.compare_digest(str(payload.get('cv', '')), self._credential_version(credential_stamp)):
+                raise ValueError()
             return UUID(payload['sub'])
         except (jwt.InvalidTokenError, ValueError, TypeError, KeyError):
             raise Unauthorized('La sesión no es válida o expiró. Inicia sesión nuevamente.') from None

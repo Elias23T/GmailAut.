@@ -9,6 +9,9 @@ class SQLTenantRepository:
     def __init__(self, session: Session):
         self.session = session
 
+    def all(self) -> list[Tenant]:
+        return list(self.session.scalars(select(Tenant).order_by(Tenant.id)))
+
     def get(self, tenant_id: UUID) -> Tenant | None:
         return self.session.get(Tenant, tenant_id, populate_existing=True)
 

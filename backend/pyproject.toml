@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "corporate-mail-ai-backend"
 version = "0.1.0"
-description = "Plataforma multiempresa de acceso de lectura a correo corporativo."
+description = "Plataforma multiempresa de lectura y envio autorizado de correo corporativo."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1",

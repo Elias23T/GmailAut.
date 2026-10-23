@@ -13,3 +13,8 @@ class GrantOutput(OutputModel):
     mailbox_id: UUID
     granted_by_membership_id: UUID | None
     created_at: datetime
+    can_send: bool
+
+
+class SendingPermission(InputModel):
+    can_send: bool

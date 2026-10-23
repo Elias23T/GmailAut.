@@ -12,6 +12,11 @@ class Mailbox(TimestampedEntity):
     imap_host: str
     imap_port: int = 993
     status: str = "pending"
+    smtp_enabled: bool = False
+    smtp_host: str | None = None
+    smtp_port: int = 465
+    smtp_security: str = 'tls'
+    webmail_url: str | None = None
 
 
 @dataclass(kw_only=True)

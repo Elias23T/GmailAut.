@@ -13,6 +13,7 @@ mailbox_grants_table = sa.Table(
     sa.Column("mailbox_id", sa.Uuid(), nullable=False),
     sa.Column("granted_by_membership_id", sa.Uuid(), nullable=True),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+    sa.Column('can_send', sa.Boolean(), nullable=False, server_default=sa.text('false')),
     sa.UniqueConstraint("membership_id", "mailbox_id", name="uq_mailbox_grants_membership_mailbox"),
     sa.ForeignKeyConstraint(
         ["tenant_id", "membership_id"], ["memberships.tenant_id", "memberships.id"],
@@ -26,7 +27,7 @@ mailbox_grants_table = sa.Table(
         ["tenant_id", "granted_by_membership_id"], ["memberships.tenant_id", "memberships.id"],
         name="fk_mailbox_grants_grantor", ondelete="CASCADE",
     ),
-    comment="Todos los permisos son de lectura. Revocar elimina la concesion y genera un evento de auditoria.",
+    comment="La concesion permite lectura; can_send autoriza envio por separado. Revocar genera auditoria.",
 
 )
 Base.registry.map_imperatively(MailboxGrant, mailbox_grants_table)

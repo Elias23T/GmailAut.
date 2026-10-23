@@ -4,12 +4,13 @@ import { api, messageOf, type Tenant, type User } from '../api'
 import MailboxesView from './MailboxesView.vue'
 import ClientsView from './ClientsView.vue'
 import CompaniesView from './CompaniesView.vue'
+import AdministratorsView from './AdministratorsView.vue'
 import AppModal from './AppModal.vue'
 import ConfirmModal from './ConfirmModal.vue'
 import AppIcon from './AppIcon.vue'
 
 const props = defineProps<{ user: User }>()
-const emit = defineEmits<{ logout: [] }>()
+const emit = defineEmits<{ logout: []; updated: [user: User] }>()
 const tenants = ref<Tenant[]>([]), selectedId = ref(''), tab = ref('mailboxes')
 const loading = ref(true), error = ref(''), closingSession = ref(false)
 const collapsed = ref(false), mobileMenuOpen = ref(false), helpOpen = ref(false), profileOpen = ref(false)
@@ -22,7 +23,7 @@ watch(mobileMenuOpen, async open => {
   if (open) document.querySelector<HTMLButtonElement>('#main-sidebar nav button')?.focus()
   else menuButton.value?.focus()
 })
-const sectionNames: Record<string, string> = { mailboxes: 'Buzones corporativos', companies: 'Empresas', clients: 'Clientes y accesos' }
+const sectionNames: Record<string, string> = { mailboxes: 'Buzones corporativos', companies: 'Empresas', clients: 'Clientes y accesos', administrators: 'Administradores' }
 const sectionName = computed(() => sectionNames[tab.value] || 'Administración')
 const initials = computed(() => props.user.name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase())
 function updateViewport(event: MediaQueryListEvent) { isMobile.value = event.matches; mobileMenuOpen.value = false }
@@ -68,10 +69,11 @@ onMounted(loadTenants)
           <button type="button" :class="{ selected: tab === 'mailboxes' }" :aria-current="tab === 'mailboxes' ? 'page' : undefined" title="Buzones" @click="navigate('mailboxes')"><AppIcon name="mail" /><span class="nav-label">Buzones</span></button>
           <button type="button" :class="{ selected: tab === 'companies' }" :aria-current="tab === 'companies' ? 'page' : undefined" title="Empresas" @click="navigate('companies')"><AppIcon name="building" /><span class="nav-label">Empresas</span></button>
           <button type="button" :class="{ selected: tab === 'clients' }" :aria-current="tab === 'clients' ? 'page' : undefined" title="Clientes" @click="navigate('clients')"><AppIcon name="users" /><span class="nav-label">Clientes</span></button>
+          <button type="button" :class="{ selected: tab === 'administrators' }" :aria-current="tab === 'administrators' ? 'page' : undefined" title="Administradores" @click="navigate('administrators')"><AppIcon name="shield" /><span class="nav-label">Administradores</span></button>
         </nav>
       </div>
       <div class="sidebar-bottom">
-        <div class="read-only"><AppIcon name="shield" :size="22" /><div><strong>Acceso de solo lectura</strong><small>Tus correos permanecen en su proveedor.</small></div></div>
+        <div class="read-only"><AppIcon name="shield" :size="22" /><div><strong>Permisos por buzón</strong><small>Lectura y envío autorizado. Tus correos permanecen en su proveedor.</small></div></div>
         <button type="button" class="sidebar-logout" title="Cerrar sesión" @click="closingSession = true"><AppIcon name="logout" /><span class="nav-label">Cerrar sesión</span></button>
       </div>
     </aside>
@@ -101,7 +103,8 @@ onMounted(loadTenants)
           <template #footer><button type="button" class="button secondary" @click="profileOpen = false">Cerrar</button><button type="button" class="button primary" @click="profileOpen = false; closingSession = true"><AppIcon name="logout" :size="17" />Cerrar sesión</button></template>
         </AppModal>
         <ConfirmModal :open="closingSession" title="Cerrar sesión" message="Volverás a la pantalla de acceso." confirm-label="Cerrar sesión" @close="closingSession = false" @confirm="emit('logout')" />
-        <CompaniesView v-if="tab === 'companies'" :tenants="tenants" :selected-id="selectedId" :loading="loading" @updated="companyUpdated" @removed="companyRemoved" @select="selectCompany" @refresh="loadTenants" />
+        <AdministratorsView v-if="tab === 'administrators'" :current-user="user" @updated="emit('updated', $event)" @logout="emit('logout')" />
+        <CompaniesView v-else-if="tab === 'companies'" :tenants="tenants" :selected-id="selectedId" :loading="loading" @updated="companyUpdated" @removed="companyRemoved" @select="selectCompany" @refresh="loadTenants" />
         <div v-else-if="loading" class="empty-state" role="status">Cargando tu espacio…</div>
         <ClientsView v-else-if="tab === 'clients'" :tenant="selected" :tenants="activeTenants" @select="selectedId = $event" @manage-companies="navigate('companies')" />
         <section v-else-if="!selected" class="empty-state card"><span class="empty-icon"><AppIcon name="building" :size="28" /></span><h1>{{ tenants.length ? 'No hay empresas activas' : 'Crea tu primera empresa' }}</h1><p>En Empresas puedes crear, seleccionar o activar una empresa para administrar sus clientes y buzones.</p><button type="button" class="button primary" @click="navigate('companies')"><AppIcon name="building" :size="18" />Ir a Empresas</button></section>

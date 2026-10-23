@@ -1,11 +1,13 @@
 export interface User { id: string; name: string; email: string | null; username: string | null; status: string; is_platform_admin: boolean }
 export interface AuthResult { user: User; access_token: string; expires_in: number }
 export interface Tenant { id: string; name: string; slug: string; membership_id: string; status: 'active' | 'disabled' | 'suspended'; created_at: string }
-export interface Mailbox { id: string; tenant_id: string; email: string; display_name: string; imap_host: string; imap_port: number; status: string; can_read: boolean }
-export interface Grant { id: string; membership_id: string; mailbox_id: string }
-export interface Client { id: string; membership_id: string; name: string; email: string; status: string }
+export interface Mailbox { id: string; tenant_id: string; email: string; display_name: string; imap_host: string; imap_port: number; status: string; can_read: boolean; can_send: boolean; smtp_enabled: boolean; smtp_host: string | null; smtp_port: number; smtp_security: 'tls' | 'starttls'; webmail_url: string | null }
+export interface Grant { id: string; membership_id: string; mailbox_id: string; can_send: boolean }
+export interface ClientAccount { id: string; name: string; email: string; username: string | null; status: string }
+export interface Client extends ClientAccount { membership_id: string }
+export interface GlobalClient { id: string; name: string; email: string | null; username: string | null; status: string; companies: { id: string; name: string; status: string }[] }
 export interface ConnectionSettings { mcp_url: string; public_https: boolean; authentication: string; scope: string; redirect_uris: string[] }
-export interface Connection { id: string; membership_id: string; name: string; email: string; active: boolean; created_at: string; expires_at: string }
+export interface Connection { id: string; membership_id: string; name: string; email: string; active: boolean; created_at: string; expires_at: string; scope: string }
 export interface AuditEvent { id: string; actor_user_id: string | null; mailbox_id: string | null; action: string; outcome: string; created_at: string; request_id: string }
 export interface MessageSummary { uid: number; subject: string; sender: string; date: string; size: number; seen: boolean }
 export interface MessagePage { uid_validity: number; total: number; items: MessageSummary[] }

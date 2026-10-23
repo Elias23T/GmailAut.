@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import text, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -196,15 +196,13 @@ def test_mappings_match_the_migrated_schema_without_changes(api_client):
     assert differences == []
 
 
-def test_database_allows_only_one_administrator(api_client):
-    from sqlalchemy.exc import IntegrityError
+def test_database_allows_multiple_administrators(api_client):
     client, _, _ = api_client
     register(client)
     with client.app.state.database.session() as session:
         session.add(User(name='Second admin', email=uuid4().hex + '@example.com', password_hash='not-a-real-hash', is_platform_admin=True))
-        with pytest.raises(IntegrityError):
-            session.flush()
-        session.rollback()
+        session.flush()
+        assert len(list(session.scalars(select(User).where(User.is_platform_admin.is_(True))))) == 2
 
 
 def test_administrator_can_login_by_username_without_an_email(api_client):
@@ -222,3 +220,36 @@ def test_administrator_can_login_by_username_without_an_email(api_client):
     denied = client.post('/auth/login', json={'username': 'test_admin', 'password': 'wrong-private-password'})
     assert denied.status_code == 401 and 'wrong-private-password' not in denied.text
     assert client.post('/auth/login', json={'password': 'private-test-password'}).status_code == 422
+
+
+def test_webmail_reference_is_saved_without_changing_mail_access_or_credentials(api_client):
+    client, connection, reader = api_client
+    _, headers = register(client)
+    tenant = company(client, headers)
+    path = f"/tenants/{tenant['id']}/mailboxes"
+    body = {'email': 'cuenta@example.com', 'display_name': 'Buzon de pruebas',
+            'imap_host': 'imap.example.com', 'imap_port': 993, 'username': 'cuenta@example.com',
+            'password': 'private-imap-password', 'webmail_url': 'https://webmail.example.com:2096/'}
+    created = client.post(path, headers=headers, json=body)
+    assert created.status_code == 201, created.text
+    box = created.json()
+    assert box['webmail_url'] == body['webmail_url'] and 'private-imap-password' not in created.text
+    path += '/' + box['id']
+    assert client.post(path + '/check', headers=headers).status_code == 200
+    secret = connection.execute(text('SELECT encrypted_secret FROM mailbox_credentials WHERE mailbox_id=:id'), {'id': box['id']}).scalar_one()
+    updated = client.patch(path, headers=headers, json={'webmail_url': 'https://otro.example.com/'})
+    assert updated.status_code == 200 and updated.json()['status'] == 'active'
+    assert updated.json()['imap_host'] == 'imap.example.com' and updated.json()['imap_port'] == 993
+    assert reader.calls == 1  # La URL solo es una referencia; no provoca conexiones.
+    assert connection.execute(text('SELECT encrypted_secret FROM mailbox_credentials WHERE mailbox_id=:id'), {'id': box['id']}).scalar_one() == secret
+    assert client.patch(path, headers=headers, json={'display_name': 'Otro nombre'}).json()['webmail_url'] == 'https://otro.example.com/'
+    assert client.get(f"/tenants/{tenant['id']}/mailboxes", headers=headers).json()[0]['webmail_url'] == 'https://otro.example.com/'
+    cleared = client.patch(path, headers=headers, json={'webmail_url': None})
+    assert cleared.status_code == 200 and cleared.json()['webmail_url'] is None
+    for invalid in ('http://webmail.example.com/', 'javascript:alert(1)', 'mail.example.com',
+                    'https://user:private-password@example.com/', 'https://example.com/' + 'a' * 2048):
+        assert client.patch(path, headers=headers, json={'webmail_url': invalid}).status_code == 422
+    assert client.patch(path, headers=headers, json={'imap_host': None}).status_code == 422
+    body['email'] = 'otra@example.com'
+    body['webmail_url'] = 'http://webmail.example.com/'
+    assert client.post(f"/tenants/{tenant['id']}/mailboxes", headers=headers, json=body).status_code == 422

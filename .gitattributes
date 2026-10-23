@@ -1,0 +1,2 @@
+# Mantener archivos de texto compatibles con Linux al clonar desde Windows.
+* text=auto eol=lf

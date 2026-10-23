@@ -44,8 +44,8 @@ def prepare(client, client_id, **overrides):
     return client.get('/oauth/authorize', params=parameters, follow_redirects=False)
 
 
-def authorize(client, client_id, customer_headers, tenant):
-    redirect = prepare(client, client_id)
+def authorize(client, client_id, customer_headers, tenant, scope='mail:read'):
+    redirect = prepare(client, client_id, scope=scope)
     assert redirect.status_code == 302, redirect.text
     request = parse_qs(urlsplit(redirect.headers['location']).query)['request'][0]
     context = client.post('/oauth/context', headers=customer_headers, json={'request': request})
@@ -93,8 +93,11 @@ def test_complete_oauth_mcp_flow_is_read_only_scoped_and_audited(api_client):
     assert initialized.status_code == 200, initialized.text
     tools = rpc(client, access, 'tools/list')
     assert tools.status_code == 200, tools.text
-    assert {item['name'] for item in tools.json()['result']['tools']} == {'list_mailboxes', 'search_mail', 'read_mail'}
-    assert all(item['annotations']['readOnlyHint'] for item in tools.json()['result']['tools'])
+    descriptions = {item['name']: item for item in tools.json()['result']['tools']}
+    assert set(descriptions) == {'list_mailboxes', 'search_mail', 'read_mail', 'prepare_email', 'send_email'}
+    assert all(descriptions[name]['annotations']['readOnlyHint'] for name in ('list_mailboxes', 'search_mail', 'read_mail'))
+    assert descriptions['send_email']['annotations']['readOnlyHint'] is False
+    assert descriptions['send_email']['annotations']['destructiveHint'] is True
     boxes = call(client, access, 'list_mailboxes')
     assert boxes.status_code == 200 and box['id'] in boxes.text, boxes.text
     searched = call(client, access, 'search_mail', {'mailbox_id': box['id'], 'query': 'Meeting'})
@@ -105,6 +108,67 @@ def test_complete_oauth_mcp_flow_is_read_only_scoped_and_audited(api_client):
     assert 'Private message body' not in events.text and access not in events.text
     assert {'mail.search', 'mail.read', 'oauth.authorize'} <= {item['action'] for item in events.json()}
     assert connection.execute(text("SELECT count(*) FROM audit_events WHERE source = 'mcp'")).scalar_one() == 2
+
+
+def test_consent_explains_unverified_authorized_mailboxes_without_exposing_other_accounts(api_client):
+    client, _, _ = api_client
+    headers, tenant, box, customer, customer_headers, client_id = setup_client(client)
+    path = f"/tenants/{tenant['id']}/mailboxes/{box['id']}"
+    assert client.patch(path, headers=headers, json={'imap_port': 995}).status_code == 200
+    # Otro buzon de la empresa, sin concesion para este cliente, debe permanecer oculto.
+    hidden = client.post(f"/tenants/{tenant['id']}/mailboxes", headers=headers, json={
+        'email': 'privado@example.com', 'display_name': 'Buzon privado', 'imap_host': 'imap.example.com',
+        'username': 'privado@example.com', 'password': 'private-imap-password'})
+    assert hidden.status_code == 201
+    redirect = prepare(client, client_id)
+    signed = parse_qs(urlsplit(redirect.headers['location']).query)['request'][0]
+    context = client.post('/oauth/context', headers=customer_headers, json={'request': signed})
+    assert context.status_code == 200
+    assert context.json()['tenants'] == []
+    assert context.json()['unavailable_mailboxes'] == [{'email': box['email'], 'status': 'pending'}]
+    assert 'privado@example.com' not in context.text
+    assert client.post('/oauth/consent', headers=customer_headers,
+                       json={'request': signed, 'tenant_id': tenant['id'], 'approve': True}).status_code == 403
+    assert client.patch(path, headers=headers, json={'imap_port': 993}).status_code == 200
+    assert client.post(path + '/check', headers=headers).status_code == 200
+    refreshed = client.post('/oauth/context', headers=customer_headers, json={'request': signed}).json()
+    assert refreshed['unavailable_mailboxes'] == []
+    assert refreshed['tenants'][0]['mailboxes'][0]['id'] == box['id']
+
+
+def test_new_connections_advertise_both_scopes_without_forcing_sending_consent(api_client):
+    client, _, _ = api_client
+    challenge = client.post('/mcp', json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'})
+    assert challenge.status_code == 401
+    assert 'scope="mail:read mail:send"' in challenge.headers['www-authenticate']
+    assert 'resource_metadata=' in challenge.headers['www-authenticate']
+    assert 'error=' in challenge.headers['www-authenticate']
+    registered = client.post('/oauth/register', json={'client_name': 'ChatGPT', 'redirect_uris': [CALLBACK]})
+    assert registered.status_code == 201 and registered.json()['scope'] == 'mail:read mail:send'
+    explicit_read = client.post('/oauth/register', json={'redirect_uris': [CALLBACK], 'scope': 'mail:read'})
+    assert explicit_read.status_code == 201 and explicit_read.json()['scope'] == 'mail:read'
+    headers, tenant, box, _, customer_headers, client_id = setup_client(client)
+    params = {'client_id': client_id, 'redirect_uri': CALLBACK, 'response_type': 'code',
+              'resource': RESOURCE, 'state': 'new-connection', 'code_challenge': CHALLENGE, 'code_challenge_method': 'S256'}
+    redirect = client.get('/oauth/authorize', params=params, follow_redirects=False)
+    assert redirect.status_code == 302
+    signed = parse_qs(urlsplit(redirect.headers['location']).query)['request'][0]
+    context = client.post('/oauth/context', headers=customer_headers, json={'request': signed}).json()
+    assert context['scope'] == 'mail:read mail:send'
+    # A full request still allows the client to choose read-only consent.
+    consent = client.post('/oauth/consent', headers=customer_headers,
+                          json={'request': signed, 'tenant_id': tenant['id'], 'approve': True, 'scope': 'mail:read'})
+    assert consent.status_code == 200
+    code = parse_qs(urlsplit(consent.json()['redirect_uri']).query)['code'][0]
+    tokens = exchange(client, client_id, code)
+    assert tokens.status_code == 200 and tokens.json()['scope'] == 'mail:read'
+    access = tokens.json()['access_token']
+    assert rpc(client, access, 'tools/list').status_code == 200
+    denied = call(client, access, 'prepare_email', {'mailbox_id': box['id'], 'to': 'destino@example.com', 'subject': 'Prueba', 'body': 'Hola'})
+    assert denied.status_code == 200 and denied.json()['result']['isError']
+    challenge = denied.json()['result']['_meta']['mcp/www_authenticate']
+    assert isinstance(challenge, list) and 'error="insufficient_scope"' in challenge[0]
+    assert 'error_description=' in challenge[0] and 'scope="mail:read mail:send"' in challenge[0]
 
 
 def test_pkce_resource_redirect_and_code_replay_are_enforced(api_client):
@@ -213,3 +277,61 @@ def test_existing_customer_can_link_two_companies_and_revocation_blocks_pending_
     code = authorize(client, client_id, customer_headers, other)
     assert client.delete(f"/admin/connections/{linked.json()['membership_id']}?tenant_id={other['id']}", headers=headers).status_code == 204
     assert exchange(client, client_id, code).status_code == 400
+
+
+def test_administrator_cannot_authorize_chatgpt_or_reuse_an_old_administrator_connection(api_client):
+    client, connection, _ = api_client
+    headers, tenant, _, _, customer_headers, client_id = setup_client(client)
+    redirect = prepare(client, client_id)
+    signed = parse_qs(urlsplit(redirect.headers['location']).query)['request'][0]
+    result = client.post('/oauth/context', headers=headers, json={'request': signed})
+    assert result.status_code == 403 and 'cliente' in result.json()['detail']
+    assert client.post('/oauth/consent', headers=headers,
+        json={'request': signed, 'tenant_id': tenant['id'], 'approve': True}).status_code == 403
+    # Representa una autorización del administrador guardada antes del cambio.
+    tokens = exchange(client, client_id, authorize(client, client_id, customer_headers, tenant)).json()
+    connection.execute(text('UPDATE oauth_tokens SET membership_id=:id'), {'id': tenant['membership_id']})
+    assert rpc(client, tokens['access_token'], 'tools/list').status_code == 401
+    assert client.post('/oauth/token', data={'grant_type': 'refresh_token', 'client_id': client_id,
+        'resource': RESOURCE, 'refresh_token': tokens['refresh_token']}).status_code != 200
+    assert client.get('/admin/clients?tenant_id=' + tenant['id'], headers=headers).status_code == 200
+
+
+def test_client_can_choose_read_only_even_when_sending_was_requested(api_client):
+    client, _, _ = api_client
+    headers, tenant, box, customer, customer_headers, client_id = setup_client(client)
+    path = f"/tenants/{tenant['id']}/mailboxes/{box['id']}"
+    assert client.patch(path, headers=headers, json={'smtp_enabled': True, 'smtp_host': 'smtp.example.com'}).status_code == 200
+    assert client.patch(path + '/grants/' + customer['membership_id'], headers=headers, json={'can_send': True}).status_code == 200
+    for scope in ('mail:read', 'mail:read mail:send'):
+        redirect = prepare(client, client_id, scope='mail:read mail:send')
+        signed = parse_qs(urlsplit(redirect.headers['location']).query)['request'][0]
+        context = client.post('/oauth/context', headers=customer_headers, json={'request': signed}).json()
+        assert context['tenants'][0]['mailboxes'][0]['can_send'] is True
+        result = client.post('/oauth/consent', headers=customer_headers,
+            json={'request': signed, 'tenant_id': tenant['id'], 'approve': True, 'scope': scope})
+        assert result.status_code == 200, result.text
+        code = parse_qs(urlsplit(result.json()['redirect_uri']).query)['code'][0]
+        tokens = exchange(client, client_id, code)
+        assert tokens.status_code == 200 and tokens.json()['scope'] == scope
+        listed = call(client, tokens.json()['access_token'], 'list_mailboxes').json()['result']
+        data = listed.get('structuredContent') or json.loads(listed['content'][0]['text'])
+        assert data['mailboxes'][0]['can_send'] is ('mail:send' in scope)
+        if scope == 'mail:read':
+            response = call(client, tokens.json()['access_token'], 'prepare_email',
+                {'mailbox_id': box['id'], 'to': 'recipient@example.com', 'subject': 'Test', 'body': 'Test body'})
+            assert response.json()['result']['isError'] is True
+
+
+def test_consent_never_grants_sending_without_admin_permission_or_beyond_requested_scopes(api_client):
+    client, connection, _ = api_client
+    _, tenant, box, _, customer_headers, client_id = setup_client(client)
+    for requested in ('mail:read', 'mail:read mail:send'):
+        redirect = prepare(client, client_id, scope=requested)
+        signed = parse_qs(urlsplit(redirect.headers['location']).query)['request'][0]
+        body = {'request': signed, 'tenant_id': tenant['id'], 'approve': True, 'scope': 'mail:read mail:send'}
+        result = client.post('/oauth/consent', headers=customer_headers, json=body)
+        assert result.status_code == (400 if requested == 'mail:read' else 403), result.text
+        assert connection.execute(text('SELECT count(*) FROM oauth_authorization_codes')).scalar_one() == 0
+    body['scope'] = 'mail:read'
+    assert client.post('/oauth/consent', headers=customer_headers, json=body).status_code == 200

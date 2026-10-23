@@ -30,7 +30,7 @@ def grant_columns():
         sa.Column('tenant_id', sa.Uuid(), sa.ForeignKey('tenants.id', ondelete='CASCADE'), nullable=False),
         sa.Column('membership_id', sa.Uuid(), nullable=False),
         sa.Column('resource_uri', sa.Text(), sa.CheckConstraint("btrim(resource_uri) <> ''"), nullable=False),
-        sa.Column('scopes', ARRAY(sa.Text()), sa.CheckConstraint("scopes = ARRAY['mail:read']"), nullable=False, server_default=sa.text("ARRAY['mail:read']")),
+        sa.Column('scopes', ARRAY(sa.Text()), sa.CheckConstraint("scopes = ARRAY['mail:read'] OR scopes = ARRAY['mail:read','mail:send']"), nullable=False, server_default=sa.text("ARRAY['mail:read']")),
         moment('created_at'), sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False)]
 
 

@@ -1,6 +1,6 @@
 [Unit]
 Description=Corporate Mail AI API
-After=network-online.target
+After=network-online.target postgresql-18.service
 Wants=network-online.target
 
 [Service]
@@ -9,13 +9,21 @@ User=corporate-mail-ai
 Group=corporate-mail-ai
 WorkingDirectory=/opt/corporate-mail-ai/backend
 EnvironmentFile=/etc/corporate-mail-ai/backend.env
-ExecStart=/opt/corporate-mail-ai/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/corporate-mail-ai/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1 --no-access-log
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
 UMask=0077
 
 [Install]

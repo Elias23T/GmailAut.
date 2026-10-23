@@ -24,3 +24,6 @@ class MessageDetail(MessageSummary):
     body: str
     attachments: list[str] = field(default_factory=list)
     truncated: bool = False
+    message_id: str = ''
+    reply_to: str = ''
+    references: str = ''
